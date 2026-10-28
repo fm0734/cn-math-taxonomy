@@ -24,7 +24,7 @@
   ];
   const RESULT_LABEL = { correct: '对', wrong: '错', skip: '不会' };
   const STATUS_LABEL = { mastered: '已掌握', shaky: '不稳', weak: '薄弱', unknown: '未测' };
-  const DIFF_LABEL = { basic: '基础', standard: '标准', advanced: '提高' };
+  const DIFF_LABEL = { basic: '基础', standard: '提高', challenge: '拓展', advanced: '拓展' };
   const TYPE_LABEL = { numeric: '数值题', choice: '选择题', short: '短答题', self: '开放题', legacy: '诊断题' };
 
   const root = document.getElementById('root');
@@ -157,7 +157,8 @@
     if (!(limit >= LIMIT_MIN && limit <= LIMIT_MAX)) limit = E.DEFAULT_LIMIT;
     let screenLimit = parseInt(st.screenLimit, 10);
     if (!(screenLimit >= SCREEN_MIN && screenLimit <= SCREEN_MAX)) screenLimit = E.SCREEN_LIMIT;
-    return { limit: limit, screenLimit: screenLimit };
+    const confirm = E.clampConfirm(st.confirm);
+    return { limit: limit, screenLimit: screenLimit, confirm: confirm };
   }
   function setSetting(k, v) { const o = getSettings(); o[k] = v; lsSet(LS_SETTINGS, o); }
   function seenList() { const v = lsGet(LS_SEEN); return Array.isArray(v) ? v : []; }
@@ -304,7 +305,8 @@
   function save() {
     if (demo || !session) return;
     lsSet(sessionKey(), {
-      v: 2, mode: session.mode, targets: session.targets, limit: session.limit, label: sessionMeta.label, answers: session.answers,
+      v: 2, mode: session.mode, targets: session.targets, limit: session.limit, confirm: session.confirm,
+      label: sessionMeta.label, answers: session.answers,
       seed: session.seed, avoid: session.avoid, savedAt: new Date().toISOString()
     });
   }
@@ -312,8 +314,9 @@
   function startSession(targets, label, limit, mode) {
     pathExpanded = false;
     const screen = mode === 'screen';
+    const st = getSettings();
     session = E.createSession(D.graph, targets, {
-      mode: mode, limit: limit || (screen ? getSettings().screenLimit : getSettings().limit), seed: newSeed(), avoid: seenList()
+      mode: mode, limit: limit || (screen ? st.screenLimit : st.limit), confirm: st.confirm, seed: newSeed(), avoid: seenList()
     });
     sessionMeta = { label: label };
     resetUi();
@@ -323,7 +326,9 @@
 
   function restoreSession(saved) {
     try {
-      session = E.replay(D.graph, saved.targets, saved.answers, { mode: saved.mode, limit: saved.limit, seed: saved.seed, avoid: saved.avoid });
+      session = E.replay(D.graph, saved.targets, saved.answers, {
+        mode: saved.mode, limit: saved.limit, confirm: saved.confirm, seed: saved.seed, avoid: saved.avoid
+      });
       sessionMeta = { label: saved.label || saved.targets.map(nameOf).join('、') };
       return true;
     } catch (e) { return false; }
@@ -348,7 +353,8 @@
 
   function rebuild(answers, limit) {
     session = E.replay(D.graph, session.targets, answers, {
-      mode: session.mode, limit: limit == null ? session.limit : limit, seed: session.seed, avoid: session.avoid
+      mode: session.mode, limit: limit == null ? session.limit : limit, confirm: session.confirm,
+      seed: session.seed, avoid: session.avoid
     });
     resetUi();
     save();
@@ -436,21 +442,31 @@
       limitInput.value = String(v);
       setSetting('limit', v);
     });
+    const confirmSelect = h('select', { id: 'confirm-select', 'aria-label': '每知识点确认题数' },
+      E.CONFIRM_CHOICES.map(function (n) {
+        return h('option', { value: String(n), selected: st.confirm === n }, String(n) + ' 题');
+      }));
+    confirmSelect.addEventListener('change', function () {
+      const v = E.clampConfirm(confirmSelect.value);
+      setSetting('confirm', v);
+      renderStart();
+    });
     const listBox = h('div', { id: 'target-list' });
     const browser = h('details', { class: 'chapter-browser', id: 'chapter-browser', open: chapterOpen || !!startQuery },
       h('summary', null, '按册、章浏览'),
       h('p', { class: 'muted small', text: '列表按年级、册、章折叠。想直接开始，用上面的搜索更快。' }),
       listBox);
     browser.addEventListener('toggle', function () { chapterOpen = browser.open; });
+    const confirmHelp = '同一知识点连续答对 ' + st.confirm + ' 题（可在下方改成 2 / 3 / 5；题库更少时以题库为准）才算掌握；答错会再出一道同级或更容易的题——确认题也错才算薄弱并回溯先修，确认题答对则标为「不稳」。';
     page.append(h('div', { class: 'card' },
       h('h1', { text: '选择诊断目标' }),
       h('p', { class: 'muted' }, subject === 'physics'
-        ? '选一个想学会或想检查的物理知识点。第一题答对就算掌握；答错会再出一道同级或更容易的题——第二题也错才算薄弱，并回溯到物理里的先修；第二题答对则标为「不稳」。'
+        ? '选一个想学会或想检查的物理知识点。' + confirmHelp
         : subject === 'english'
-        ? '选一个想学会或想检查的英语知识点。第一题答对就算掌握；答错会再出一道同级或更容易的题——第二题也错才算薄弱，并回溯到先修；第二题答对则标为「不稳」。'
+        ? '选一个想学会或想检查的英语知识点。' + confirmHelp
         : subject === 'chinese'
-        ? '选一个想学会或想检查的语文知识点。第一题答对就算掌握；答错会再出一道同级或更容易的题——第二题也错才算薄弱，并回溯到先修；第二题答对则标为「不稳」。'
-        : '选一个想学会或想检查的知识点。第一题答对就算掌握；答错会再出一道同级或更容易的题——第二题也错才算薄弱，并回溯到先修；第二题答对则标为「不稳」。'),
+        ? '选一个想学会或想检查的语文知识点。' + confirmHelp
+        : '选一个想学会或想检查的知识点。' + confirmHelp),
       h('div', { class: 'stage-tabs', role: 'tablist', 'aria-label': '学段' },
         subject === 'physics' ? [stageButton('', '全部'), stageButton('j', '初中'), stageButton('h', '高中')]
           : subject === 'chinese' ? [stageButton('', '全部'), stageButton('p', '小学')]
@@ -468,7 +484,8 @@
       h('p', { class: 'muted small', id: 'match-count' }),
       h('div', { class: 'row' },
         h('label', null, '单点 / 整章题量上限（' + LIMIT_MIN + '–' + LIMIT_MAX + '）', limitInput),
-        h('span', { class: 'muted small' }, '每个知识点最多问 2 题。到上限后，没测到的标为「未测」。'))));
+        h('label', null, '每知识点确认题数', confirmSelect),
+        h('span', { class: 'muted small' }, '连续答对这么多题才判掌握；中途答错会再出一道确认题。到上限后，没测到的标为「未测」。'))));
     page.append(gradeCard());
     page.append(h('div', { class: 'card' }, browser));
     page.append(h('p', { class: 'muted small' },
@@ -515,7 +532,7 @@
       });
       box.append(
         h('h2', { text: '按年级整体诊断' }),
-        h('p', { class: 'muted' }, '不选具体知识点，在一个年级（或一册）里抽查：每个知识点最多问 2 题，答错只在所选范围内回溯先修，最后按章汇总出哪几章薄弱。适合期初摸底、学期末复习。'),
+        h('p', { class: 'muted' }, '本测评检查本年级知识点是否掌握，不是竞赛拔高。按「基础 / 提高 / 拓展」出题：先出提高题，答对再出拓展题确认掌握；答错会先补基础题，仍错会回到前面年级的相关知识点。每个知识点连续答对 ' + getSettings().confirm + ' 题才算掌握（可在上方改），最后按章汇总出哪几章薄弱。适合期初摸底、学期末复习。'),
         tabs('年级', subject === 'physics'
           ? [['八', '八年级'], ['九', '九年级'], ['必修一', '必修一'], ['必修二', '必修二'], ['必修三', '必修三'],
             ['选必一', '选必一'], ['选必二', '选必二'], ['选必三', '选必三']]
@@ -611,18 +628,44 @@
   }
 
   /* ------------------------------------------------------------ 出题页 */
+  function targetMinGrade() {
+    let m = Infinity;
+    (session.targets || []).forEach(function (tid) {
+      const x = D.graph.byId[tid];
+      if (x && typeof x.grade === 'number' && x.grade < m) m = x.grade;
+    });
+    return m;
+  }
+  function isPrereqKnowledge(id) {
+    const t = D.graph.byId[id];
+    if (!t || !session || (session.targets || []).indexOf(id) >= 0) return false;
+    return typeof t.grade === 'number' && t.grade < targetMinGrade();
+  }
   function reasonFor(item) {
     const id = item.topicId;
-    if (item.attempt === 2) return '第一题没答对，再出一道' + (item.question.difficulty === 'basic' ? '更基础' : '同级或更容易') + '的题确认：这一题也错才算薄弱，答对则标为「不稳」。';
+    const need = E.needConfirm(D.graph, session, id);
+    const prev = session.attempts[id] || [];
+    const hadFail = prev.some(function (a) { return a.result !== 'correct'; });
+    const diff = item.question && item.question.difficulty;
+    if (isPrereqKnowledge(id)) {
+      return '这是前面年级的前置知识：因为本年级相关知识点还没过关，先回来检查它。';
+    }
+    if (hadFail) return '前面有题没答对，再出一道' + (diff === 'basic' ? '基础' : '同级或更容易') + '的题确认：这一题也错才算薄弱，答对则标为「不稳」。';
+    if (item.attempt > 1) {
+      if (diff === 'challenge' || diff === 'advanced') {
+        return '上一题已答对，再出一道拓展题确认掌握（当前第 ' + item.attempt + ' 题，连续答对 ' + need + ' 题才算掌握）。';
+      }
+      return '同一知识点需连续答对 ' + need + ' 题才算掌握（当前第 ' + item.attempt + ' 题）。';
+    }
     for (let i = session.answers.length - 1; i >= 0; i--) {
       const a = session.answers[i];
       if (a.result === 'correct') continue;
       const p = D.graph.prereqs[a.id].find(function (x) { return x.id === id; });
-      if (p && E.statusOf(session, a.id) === 'weak') return '因为「' + nameOf(a.id) + '」两题都没通过，现在检查它的' + (p.strength === 'hard' ? '硬' : '软') + '先修知识点。';
+      if (p && E.statusOf(session, a.id) === 'weak') return '因为「' + nameOf(a.id) + '」确认后仍没通过，现在检查它的' + (p.strength === 'hard' ? '硬' : '软') + '先修知识点。';
     }
-    if (session.mode === 'screen') return '整体诊断：在所选范围内抽查知识点（离章末近的先测，答对会连带跳过它的先修）。';
-    if (session.targets.length > 1) return '这是所选章节的知识点（离章末最近的先测，答对会连带跳过它的先修）。';
-    return session.targets.indexOf(id) >= 0 ? '这是你选择的目标知识点，先从它开始测。' : '检查目标的先修知识点。';
+    if (session.mode === 'screen') return '整体诊断：先测本年级知识点（离章末近的先测）。先出提高题，答对再出拓展题确认；答错先补基础题。';
+    if (session.targets.length > 1) return '这是所选章节的知识点（离章末最近的先测，连续答对会连带跳过它的先修）。';
+    return session.targets.indexOf(id) >= 0 ? '这是你选择的目标知识点，先从它开始测（连续答对 ' + need + ' 题才算掌握）。' : '检查目标的先修知识点。';
   }
 
   function judgeAndGo(item) {
@@ -665,9 +708,10 @@
       h('div', { class: 'progress' }, h('i', { style: 'width:' + Math.round(n / session.limit * 100) + '%' })),
       h('h2', { class: 'q-title' }, t.name, ' ', h('span', { class: 'tag', text: t.chapter })),
       h('div', { class: 'row small', style: 'margin:2px 0' },
+        isPrereqKnowledge(id) ? h('span', { class: 'tag ext', text: '前置知识' }) : null,
         h('span', { class: 'tag diff-' + q.difficulty, text: DIFF_LABEL[q.difficulty] || q.difficulty }),
         h('span', { class: 'tag', text: TYPE_LABEL[q.type] || q.type }),
-        h('span', { class: 'tag', text: '本知识点第 ' + item.attempt + ' 题' })),
+        h('span', { class: 'tag', text: '本知识点第 ' + item.attempt + ' / ' + E.needConfirm(D.graph, session, id) + ' 题' })),
       h('div', { class: 'reason', text: reasonFor(item) }),
       h('div', { class: 'q-text', id: 'q-text', text: q.prompt }));
     const stemFig = figureEl(q.figure);
@@ -910,6 +954,7 @@
     const out = [];
     if (targetSet.has(id)) out.push(tag('target', '目标'));
     if (rootSet.has(id)) out.push(tag('root', '根因'));
+    if (isPrereqKnowledge(id)) out.push(tag('ext', '前置知识'));
     out.push(tag(st, STATUS_LABEL[st]));
     if (D.graph.byId[id].external) out.push(tag('ext', '小学'));
     return out;
@@ -938,7 +983,7 @@
     }
     else if (!sum.roots.length && !sum.shaky.length && targetsMastered) headline = '目标知识点已掌握，没有发现需要补的先修。';
     else if (!sum.roots.length && !sum.shaky.length) headline = '没有判出薄弱点，但目标尚未全部测到。';
-    else if (!sum.roots.length) headline = '没有判出薄弱点，但有 ' + sum.shaky.length + ' 个知识点「不稳」（第一题没答对、第二题答对），建议巩固。';
+    else if (!sum.roots.length) headline = '没有判出薄弱点，但有 ' + sum.shaky.length + ' 个知识点「不稳」（中途答错过、确认题答对），建议巩固。';
     else headline = '共发现 ' + sum.roots.length + ' 个薄弱根因' + (sum.shaky.length ? '、' + sum.shaky.length + ' 个不稳的知识点' : '') + '，按下面的学习路径从前往后补。';
 
     const more = screen ? 10 : 4;
@@ -951,7 +996,7 @@
         stat('shaky', sum.shaky.length, '不稳'),
         stat('ok', sum.mastered.length, '已掌握'),
         stat('unk', sum.untested.length, '未测')),
-      sum.unconfirmed.length ? h('p', { class: 'notice' }, '「' + sum.unconfirmed.map(nameOf).join('」「') + '」只答了第一题（答错）就到了题量上限，没来得及复测，暂按薄弱处理。') : null,
+      sum.unconfirmed.length ? h('p', { class: 'notice' }, '「' + sum.unconfirmed.map(nameOf).join('」「') + '」答错过但还没完成确认就到了题量上限，没来得及复测，暂按薄弱处理。') : null,
       sum.limitReached ? h('p', { class: 'notice' }, '已达到题量上限（' + sum.limit + '），剩余没测到的知识点标为「未测」。薄弱根因的先修里若有未测点，真正的根因可能更靠前。',
         session.limit >= 60 ? null : h('button', { class: 'no-print', style: 'margin-left:8px', onclick: function () { rebuild(session.answers, Math.min(session.limit + more, 60)); } }, '再多答 ' + Math.min(more, 60 - session.limit) + ' 题')) : null,
       h('p', { class: 'muted small' }, '自动判题只是近似的，答题记录里可以更正任何一题。生成时间：' + new Date().toLocaleString('zh-CN')),
@@ -970,14 +1015,14 @@
       sum.roots.length ? sum.roots.map(function (r) {
         const notes = h('div');
         if (r.pendingPrereqs.length) notes.append(h('div', { class: 'notice', text: '它的先修「' + r.pendingPrereqs.map(nameOf).join('」「') + '」没来得及测（题量用完），真正的根因可能更靠前。' }));
-        if (r.outOfScopePrereqs.length) notes.append(h('div', { class: 'notice', text: '它的先修「' + r.outOfScopePrereqs.map(nameOf).join('」「') + '」不在所选范围内，没有检查。' }));
+        if (r.outOfScopePrereqs.length) notes.append(h('div', { class: 'notice', text: '它的前置知识「' + r.outOfScopePrereqs.map(nameOf).join('」「') + '」不在所选范围内，没有检查。' }));
         if (r.externalPrereqs.length) notes.append(h('div', { class: 'muted small', text: '小学先修（无诊断题，未测）：' + r.externalPrereqs.map(nameOf).join('、') }));
         return topicItem(r.id, statusTags(r.id, rootSet, targetSet), notes);
       }) : h('p', { text: targetsMastered ? '没有。' : '暂未发现。' })));
 
     page.append(h('div', { class: 'card', id: 'shaky' },
       h('h2', { text: '不稳的知识点（' + sum.shaky.length + '）' }),
-      h('p', { class: 'muted small' }, '第一题没答对，但第二题（同级或更容易）答对了：可能是粗心，也可能掌握得不牢。它们会出现在学习路径里需要巩固，但工具没有继续向它们的先修回溯（只有两题都错才回溯）。'),
+      h('p', { class: 'muted small' }, '中途答错过，但确认题（同级或更容易）答对了：可能是粗心，也可能掌握得不牢。它们会出现在学习路径里需要巩固，但工具没有继续向它们的先修回溯（只有确认后仍错才回溯）。'),
       sum.shaky.length ? sum.shaky.map(function (id) { return topicItem(id, statusTags(id, rootSet, targetSet)); }) : h('p', { text: '没有。' })));
 
     page.append(h('div', { class: 'card', id: 'path' },
@@ -1041,7 +1086,7 @@
     return h('div', { class: 'card', id: 'chapters' },
       h('h2', { text: '按章汇总' }),
       h('p', { class: 'muted small' }, '每章的知识点掌握情况，薄弱多的章排在前面；点开看具体是哪几个知识点。色条从左到右：掌握、不稳、薄弱、未测。'),
-      outOfScope.length ? h('p', { class: 'notice', id: 'out-of-scope' }, '部分薄弱点的先修在所选范围之外，未检查（涉及 ' + outOfScope.length + ' 个薄弱点，如「' +
+      outOfScope.length ? h('p', { class: 'notice', id: 'out-of-scope' }, '部分薄弱点的前置知识在所选年级之外，未检查（涉及 ' + outOfScope.length + ' 个薄弱点，如「' +
         outOfScope.slice(0, 3).map(function (r) { return nameOf(r.id); }).join('」「') + '」）。可对这些知识点单独做诊断，沿先修继续往前查。') : null,
       chapters.map(function (c) {
         return h('details', { class: 'topic chap-sum', open: c.weak > 0 || c.shaky > 0 },
@@ -1504,7 +1549,7 @@
       demo = { oracle: makeOracle(resolved.ids, resolved.mode) };
       session = E.createSession(D.graph, resolved.ids, {
         mode: resolved.mode, limit: limit || (resolved.mode === 'screen' ? getSettings().screenLimit : getSettings().limit),
-        seed: seedParam == null ? 'demo' : seedParam
+        confirm: getSettings().confirm, seed: seedParam == null ? 'demo' : seedParam
       });
       sessionMeta = { label: resolved.label };
       const step = parseInt(params.get('step'), 10);
