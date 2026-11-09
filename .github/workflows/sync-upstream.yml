@@ -24,5 +24,9 @@ jobs:
           git remote add upstream https://github.com/xiaoyang111222/cn-math-taxonomy.git
           git fetch upstream
           git checkout main
-          git merge upstream/main
+          git merge upstream/main --no-commit --no-ff
+          git checkout HEAD -- .github/workflows/
+          if ! git diff --cached --quiet; then
+            git commit -m "Merge remote-tracking branch 'upstream/main'"
+          fi
           git push origin main
